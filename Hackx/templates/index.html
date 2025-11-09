@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Speech to ASL Converter</title>
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Quicksand', Arial, sans-serif;
+            background: linear-gradient(90deg, #28c9fa 0, #6d60f6 100%);
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            margin: 50px auto;
+            max-width: 600px;
+            background: #fff;
+            padding: 40px;
+            border-radius: 16px;
+            box-shadow: 0 0 32px #93ccfc67;
+            text-align: center;
+            position: relative;
+        }
+        h1 {
+            color: #2632e3;
+            font-size: 2em;
+            margin-bottom: 0.2em;
+        }
+        .subtitle {
+            font-size: 1.07em;
+            color: #6d60f6;
+            margin: 6px 0 30px 0;
+        }
+        #result {
+            margin: 18px 0;
+            font-size: 1.2em;
+            color: #47a9d4;
+            min-height: 32px;
+        }
+        #gestures {
+            margin-top: 18px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 18px;
+        }
+        .asl-gesture {
+            background: #ecf5fc;
+            border-radius: 10px;
+            padding: 12px;
+            transition: box-shadow .2s;
+            box-shadow: 0 0 10px #77aaff22;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 112px;
+        }
+        .asl-gesture img {
+            max-width: 80px;
+            max-height: 80px;
+            margin-bottom: 8px;
+        }
+        .gesture-label {
+            font-size: 0.98em;
+            color: #2632e3;
+            background: #e7e9fc;
+            border-radius: 7px;
+            padding: 2px 10px;
+            margin-bottom: 2px;
+        }
+        #loading {
+            font-size: 1.1em;
+            color: #6d60f6;
+            margin: 12px 0;
+            display: none;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: .6;}
+            50% { opacity: 1;}
+            100% { opacity: .6;}
+        }
+        button {
+            background: linear-gradient(90deg, #28c9fa 0, #6d60f6 100%);
+            color: #fff;
+            padding: 14px 34px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1.1em;
+            cursor: pointer;
+            margin: 22px 0 12px 0;
+            transition: background .2s;
+        }
+        button:active {
+            filter: brightness(0.9);
+        }
+        .history {
+            margin-top: 30px;
+            background: #f0f7fa;
+            border-radius: 10px;
+            padding: 16px;
+            font-size: 0.98em;
+            color: #666;
+            text-align: left;
+        }
+        .clear-btn {
+            background: #e559fa;
+            margin-left: 12px;
+            padding: 6px 16px;
+            border-radius: 8px;
+            font-size: .96em;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+        }
+        .clear-btn:active {
+            background: #be3ac7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Speech to ASL Converter</h1>
+        <div class="subtitle">Speak and instantly view corresponding ASL gestures!</div>
+        <button id="speakBtn">🎤 Start Speech Recognition</button>
+        <span id="loading">Listening...</span>
+        <div id="result"></div>
+        <div id="gestures"></div>
+        <div class="history" style="display:none;" id="historyBox">
+            <strong>History</strong> <button class="clear-btn" onclick="clearHistory()">Clear</button>
+            <div id="historyContent"></div>
+        </div>
+    </div>
+
+   <script>
+  const speakBtn = document.getElementById('speakBtn');
+  const resultDiv = document.getElementById('result');
+  const gesturesDiv = document.getElementById('gestures');
+  const loadingDiv = document.getElementById('loading');
+  const historyBox = document.getElementById('historyBox');
+  const historyContent = document.getElementById('historyContent');
+  let recognition, listening = false, historyArr = [];
+
+  // Init recognition
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    speakBtn.disabled = true;
+    resultDiv.innerHTML = 'This browser does not support speech recognition. Please use <b>Google Chrome</b>.';
+  } else {
+    recognition = new SR();
+    recognition.lang = 'en-US';
+    recognition.interimResults = true;    // show partials earlier
+    recognition.continuous = true;        // keep listening until you stop
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      console.log('SR started');
+      loadingDiv.style.display = 'inline';
+      speakBtn.textContent = '🛑 Stop';
+      listening = true;
+    };
+    recognition.onend = () => {
+      console.log('SR ended');
+      loadingDiv.style.display = 'none';
+      speakBtn.textContent = '🎤 Start Speech Recognition';
+      listening = false;
+    };
+    recognition.onaudioend = () => console.log('Audio captured ended');
+    recognition.onsoundend = () => console.log('Sound ended');
+
+    recognition.onresult = (event) => {
+      let transcript = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        transcript += event.results[i][0].transcript;
+      }
+      transcript = transcript.trim();
+      if (!transcript) return;
+
+      resultDiv.innerHTML = `<span>Recognized:</span> <b>"${transcript}"</b>`;
+      fetch('/translate', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({"text": transcript})
+      })
+      .then(r => r.json())
+      .then(data => {
+        showGestures(data.gestures, transcript);
+        addToHistory(transcript, data.gestures);
+      })
+      .catch(err => {
+        console.error(err);
+        resultDiv.innerHTML += "<br><span style='color:red;'>Server error</span>";
+      });
+    };
+
+    recognition.onerror = (event) => {
+      console.error('SR error:', event.error);
+      loadingDiv.style.display = 'none';
+      let msg = 'Speech recognition error: ' + event.error;
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        msg += ' — allow microphone access (lock icon in the address bar).';
+      } else if (event.error === 'no-speech') {
+        msg += ' — try speaking louder or check your input device.';
+      }
+      resultDiv.innerHTML = `<span style='color:red;'>${msg}</span>`;
+      listening = false;
+      speakBtn.textContent = '🎤 Start Speech Recognition';
+    };
+  }
+
+  speakBtn.addEventListener('click', () => {
+    if (!recognition) return;
+    if (!listening) {
+      gesturesDiv.innerHTML = '';
+      resultDiv.innerHTML = '';
+      recognition.start();         // needs a user gesture (= this click)
+    } else {
+      recognition.stop();
+    }
+  });
+
+  function showGestures(gestures) {
+    gesturesDiv.innerHTML = '';
+    if (!gestures || gestures.length === 0) {
+      gesturesDiv.innerHTML = "<span style='color:#e32a3c;'>No ASL gestures found.</span>";
+      return;
+    }
+    gestures.forEach(file => {
+      const label = file.split('.')[0].replace(/_/g, ' ');
+      const box = document.createElement('div');
+      box.className = 'asl-gesture';
+      const img = document.createElement('img');
+      img.src = '/static/asl_gestures/' + file;
+      img.alt = label;
+      const lbl = document.createElement('div');
+      lbl.className = 'gesture-label';
+      lbl.textContent = label[0].toUpperCase() + label.slice(1);
+      box.appendChild(img); box.appendChild(lbl);
+      gesturesDiv.appendChild(box);
+    });
+  }
+
+  function addToHistory(text, gestures) {
+    historyArr.unshift({text, gestures});
+    updateHistory();
+  }
+  function updateHistory() {
+    if (historyArr.length === 0) { historyBox.style.display = "none"; return; }
+    historyBox.style.display = "";
+    historyContent.innerHTML = historyArr.slice(0,5).map(entry => {
+      const chips = entry.gestures.map(f => {
+        const label = f.split('.')[0].replace(/_/g, ' ');
+        return `<span style="background:#deebfa;border-radius:4px;padding:1px 7px;margin-right:5px;">${label[0].toUpperCase()+label.slice(1)}</span>`;
+      }).join('');
+      return `<div><span style="color:#2632e3;">"${entry.text}"</span> → ${chips}</div>`;
+    }).join('');
+  }
+  function clearHistory() {
+  historyArr = [];
+  updateHistory();
+}
+</script>
+
+
+</body>
+</html>
